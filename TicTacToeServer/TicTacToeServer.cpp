@@ -51,8 +51,8 @@ public:
 class Room {
 private:
 public:
-	Client* _client1;
-	Client* _client2;
+	Client* _client1=NULL;
+	Client* _client2=NULL;
 	int PeopleInRoom = 0;
 	int RoomNumber = 0;
 	Room() {}
@@ -91,11 +91,11 @@ bool CompareClients(Client* client1, Client* client2) {
 }
 using namespace std;
 
-Room* GetRoomByNumber(int RoomNumber, vector<Room> _rooms) {
-	for (int i = 0; i < _rooms.size(); i++)
+Room* GetRoomByNumber(int RoomNumber, vector<Room>* _rooms) {
+	for (int i = 0; i < _rooms->size(); i++)
 	{
-		if (_rooms[i].RoomNumber == RoomNumber)
-			return &_rooms[i];
+		if (_rooms->at(i).RoomNumber == RoomNumber)
+			return &_rooms->at(i);
 	}
 	return NULL;
 }
@@ -181,9 +181,9 @@ int main()
 			bool clientAlreadyExist = false;
 			for (int i = 0; i < _clients.size(); i++) {
 				if (CompareClients(_actualClient, _clients[i])) {
-					_actualClient = _clients[i];
-					//_actualClient->SetName(_clients[i]->_name);
-					//_actualClient->InRoomNumber = _clients[i]->InRoomNumber;
+					//_actualClient = _clients[i];
+					_actualClient->SetName(_clients[i]->_name);
+					_actualClient->InRoomNumber = _clients[i]->InRoomNumber;
 					clientAlreadyExist = true;
 					printf("Client Already Exist \n");
 				}
@@ -191,18 +191,19 @@ int main()
 			//Si es un nuevo player
 			if (!clientAlreadyExist) {
 				_actualClient->SetName(buf);
-				_clients.push_back(new Client(_actualClient->_name, _actualClient->_sockaddr_in));
+				Client* newClient = new Client(_actualClient->_name, _actualClient->_sockaddr_in);
+				_clients.push_back(newClient);
 				printf("New User Connected \n");
 
 				if (mainRoom.PeopleInRoom == 1) {
 					_rooms.push_back(Room());
-					_rooms.back().Initialize(mainRoom._client1, _actualClient, RoomCount);
+					_rooms.back().Initialize(mainRoom._client1, newClient, RoomCount);
 					RoomCount++;
 					//StartGame(_rooms.back());
 					mainRoom = Room();
 				}
 				else {
-					mainRoom.AddClient(_actualClient);
+					mainRoom.AddClient(newClient);
 					//SendLobbyInfo(mainRoom);
 				}
 			}//Si ya está
@@ -211,7 +212,7 @@ int main()
 				if (_actualClient->InRoomNumber == 0)
 					room = &mainRoom;
 				else
-					room = GetRoomByNumber(_actualClient->InRoomNumber, _rooms);
+					room = GetRoomByNumber(_actualClient->InRoomNumber, &_rooms);
 
 				memset(message, '\0', BUFLEN);
 				strcat_s(message, _actualClient->_name);
