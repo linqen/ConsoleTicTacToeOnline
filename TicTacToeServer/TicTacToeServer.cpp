@@ -215,27 +215,49 @@ int main()
 					room = GetRoomByNumber(_actualClient->InRoomNumber, &_rooms);
 
 				memset(message, '\0', BUFLEN);
-				strcat_s(message, _actualClient->_name);
-				strcat_s(message, " ");
-				strcat_s(message, (BUFLEN - strlen(_actualClient->_name) - 1) * sizeof(char), buf);
-				printf(message);
+				//Chequeo buf
 
-				//Le mando al cliente 1
-				if (room->_client1 != NULL) {
-					if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client1->_sockaddr_in, slen) == SOCKET_ERROR)
-					{
-						printf("sendto() failed with error code : %d", WSAGetLastError());
-						exit(EXIT_FAILURE);
+				//Si arranca con # && es el turno de ese player
+				if (recv_len > 1 && buf[0] == '#' /*&& turno de ese player*/) {
+					//Envío acción al tablero
+					//room.board.DoMove(buf[1]);
+					//Chequeo victoria
+					//int win = room.board.checkwin();
+					//Le envío a los 2 jugadores el estado resultante del tablero
+
+					//Si se termino indico ganador y perdedor
+					//Ofrezco comenzar denuevo o salir
+
+				}
+				//Si no arranca con # o si no es el turno de ese player
+				else {
+					//Envío el mensaje a la sala
+					strcat_s(message, _actualClient->_name);
+					strcat_s(message, " ");
+					const int whiteSpaceLengt = 1;
+					strcat_s(message, (BUFLEN - strlen(_actualClient->_name) - whiteSpaceLengt), buf);
+					printf(message);
+
+					//Le mando al cliente 1
+					if (room->_client1 != NULL) {
+						if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client1->_sockaddr_in, slen) == SOCKET_ERROR)
+						{
+							printf("sendto() failed with error code : %d", WSAGetLastError());
+							exit(EXIT_FAILURE);
+						}
+					}
+					//Le mando al cliente 2
+					if (room->_client2 != NULL) {
+						if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client2->_sockaddr_in, slen) == SOCKET_ERROR)
+						{
+							printf("sendto() failed with error code : %d", WSAGetLastError());
+							exit(EXIT_FAILURE);
+						}
 					}
 				}
-				//Le mando al cliente 2
-				if (room->_client2 != NULL) {
-					if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client2->_sockaddr_in, slen) == SOCKET_ERROR)
-					{
-						printf("sendto() failed with error code : %d", WSAGetLastError());
-						exit(EXIT_FAILURE);
-					}
-				}
+
+
+				
 			}
 		}
 		else {
