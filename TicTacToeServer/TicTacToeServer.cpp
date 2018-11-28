@@ -279,6 +279,7 @@ int main()
 							strcat_s(sendBuffer, "\n Lets play! it's ");
 							strcat_s(sendBuffer, room->nextClientToPlay->_name);
 							strcat_s(sendBuffer, " turn! \n");
+							strcat_s(sendBuffer, "\n Use # and choose the position number, ej: #5 ");
 							//Envío el tablero con el estado inicial y los nombres de contra quien juegan
 							SendMessageTo(room->_client1);
 							SendMessageTo(room->_client2);
@@ -434,6 +435,7 @@ void JoinPlayerToMainRoom(Client* client) {
 		strcat_s(sendBuffer, "\n Lets play! it's ");
 		strcat_s(sendBuffer, _rooms.back().nextClientToPlay->_name);
 		strcat_s(sendBuffer, " turn! \n");
+		strcat_s(sendBuffer, "\n Use # and choose the position number, ej: #5 ");
 		//Envío el tablero con el estado inicial y los nombres de contra quien juegan
 		SendMessageTo(_rooms.back()._client1);
 		SendMessageTo(_rooms.back()._client2);
