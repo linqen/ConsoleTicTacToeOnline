@@ -1,11 +1,4 @@
-// ChatServer.cpp : Defines the entry point for the console application.
-//
-
 #include "stdafx.h"
-
-/*
-Simple UDP Server
-*/
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
@@ -72,6 +65,8 @@ public:
 	Client* _client2=NULL;
 	int PeopleInRoom = 0;
 	int RoomNumber = 0;
+	bool WaitingForConfirmation = false;
+	int confirmationCounter = 0;
 	Client* nextClientToPlay;
 	Room() {}
 	void Initialize(Client* client1, Client* client2, int iRoomNumber) {
@@ -83,6 +78,9 @@ public:
 		_client2->InRoomNumber = RoomNumber;
 		_client1->Mark = 'X';
 		_client2->Mark = 'O';
+		StartBoard();
+	}
+	void Restart() {
 		StartBoard();
 	}
 	bool AddClient(Client* client) {
@@ -125,17 +123,11 @@ public:
 		nextClientToPlay = nextClientToPlay == _client1 ? _client2 : _client1;
 		return true;
 	}
+	Client* GetLastMoveAuthor() {
+		return nextClientToPlay == _client1 ? _client2 : _client1;
+	}
 	
 };
-
-
-/*********************************************
-
-	FUNCTION TO RETURN GAME STATUS
-	1 FOR GAME IS OVER WITH RESULT
-	-1 FOR GAME IS IN PROGRESS
-	O GAME IS OVER AND NO RESULT
-**********************************************/
 
 int checkwin(char square[10])
 {
@@ -203,16 +195,15 @@ void appendChar(char* s, char c) {
 SOCKET s;
 struct sockaddr_in server, si_other;
 int slen, recv_len;
-char buf[BUFLEN];
+char receiveBuffer[BUFLEN];
 WSADATA wsa;
 vector<Client*> _clients;
 vector<Room> _rooms;
 Room mainRoom = Room();
-Client* _actualClient = new Client();
 int RoomCount = 100;
 fd_set fds;
 timeval interval;
-char message[BUFLEN];
+char sendBuffer[BUFLEN];
 int text = 0;
 
 void InitialiseWinSock();
@@ -220,9 +211,15 @@ void CreateSocket();
 void SetSockAddr();
 void Bind();
 void ShowWaitingForDataText();
-
+bool CheckIfClientAlreadyExist(Client* client);
+void JoinNewPlayer(Client* client);
+void FitBoardInMessage(Room* room);
+void SendMessageTo(Client* client);
+void RemoveClient(Client* client);
+void JoinPlayerToMainRoom(Client* client);
 int main()
 {
+	Client* _actualClient = new Client();
 	slen = sizeof(si_other);
 
 	//Initialise winsock
@@ -238,7 +235,7 @@ int main()
 	interval.tv_usec = 300000;
 
 	//keep listening for data
-	while (1)
+	while (true)
 	{
 		ShowWaitingForDataText();
 
@@ -246,155 +243,125 @@ int main()
 		FD_SET(s, &fds);
 		int j = select(s, &fds, NULL, NULL, &interval);
 		if (j>0) {
-			//clear the buffer by filling null, it might have previously received data
-			memset(buf, '\0', BUFLEN);
+			//Limpio el buffer de recepcion de mensajes
+			memset(receiveBuffer, '\0', BUFLEN);
+			//Limpio el buffer de envio de mensajes
+			memset(sendBuffer, '\0', BUFLEN);
 
 			//try to receive some data, this is a blocking call
-			if ((recv_len = recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == SOCKET_ERROR)
+			if ((recv_len = recvfrom(s, receiveBuffer, BUFLEN, 0, (struct sockaddr *) &si_other, &slen)) == SOCKET_ERROR)
 			{
 				printf("recvfrom() failed with error code : %d", WSAGetLastError());
 				exit(EXIT_FAILURE);
 			}
+
 			_actualClient->_sockaddr_in = si_other;
-			bool clientAlreadyExist = false;
-			for (int i = 0; i < _clients.size(); i++) {
-				if (CompareClients(_actualClient, _clients[i])) {
-					//_actualClient = _clients[i];
-					_actualClient->SetName(_clients[i]->_name);
-					_actualClient->InRoomNumber = _clients[i]->InRoomNumber;
-					clientAlreadyExist = true;
-					printf("Client Already Exist \n");
-				}
-			}
+
+			bool clientAlreadyExist = CheckIfClientAlreadyExist(_actualClient);
+			
 			//Si es un nuevo player
 			if (!clientAlreadyExist) {
-				_actualClient->SetName(buf);
-				Client* newClient = new Client(_actualClient->_name, _actualClient->_sockaddr_in);
-				_clients.push_back(newClient);
-				printf("New User Connected \n");
-
-				if (mainRoom.PeopleInRoom == 1) {
-					_rooms.push_back(Room());
-					_rooms.back().Initialize(mainRoom._client1, newClient, RoomCount);
-					RoomCount++;
-
-					//Envío el tablero con el estado inicial y los nombres de contra quien juegan
-
-					mainRoom = Room();
-				}
-				else {
-					mainRoom.AddClient(newClient);
-					//SendLobbyInfo(mainRoom);
-				}
+				JoinNewPlayer(_actualClient);
 			}//Si ya está
 			else if(_actualClient->InRoomNumber != 0) {
 				Room* room;
 				room = GetRoomByNumber(_actualClient->InRoomNumber, &_rooms);
-				//Chequeo buf
-				memset(message, '\0', BUFLEN);
+				if (recv_len > 1 && receiveBuffer[0] == '#' && room->WaitingForConfirmation) {
+					if (receiveBuffer[1] == 'Y') {
+						room->confirmationCounter++;
+						if (room->confirmationCounter > 1) {
+							//Reinicio tablero y que arranque denuevo
+							room->confirmationCounter = 0;
+							room->WaitingForConfirmation = false;
+							room->Restart();
 
+							FitBoardInMessage(room);
+							strcat_s(sendBuffer, "\n Lets play! it's ");
+							strcat_s(sendBuffer, room->nextClientToPlay->_name);
+							strcat_s(sendBuffer, " turn! \n");
+							//Envío el tablero con el estado inicial y los nombres de contra quien juegan
+							SendMessageTo(room->_client1);
+							SendMessageTo(room->_client2);
+							memset(sendBuffer, '\0', BUFLEN);
+						}
+					}
+					else if(receiveBuffer[1] == 'N'){
+						//Desconecto al player que dijo que no, y al otro lo mando al main room
+						//Obtengo al que quiere seguir jugando
+						Client* clientWhoStillWantToPlay = CompareClients(_actualClient,room->_client1) ? room->_client2 : room->_client1;
+						JoinPlayerToMainRoom(clientWhoStillWantToPlay);
+						strcat_s(sendBuffer, "Thanks for play! \n");
+						strcat_s(sendBuffer, "\n    See you! ");
+						SendMessageTo(_actualClient);
+						RemoveClient(_actualClient);
+						room->_client1 = NULL;
+						room->_client2 = NULL;
+					}
+
+				}
 				//Si arranca con # && es el turno de ese player
-				if (recv_len > 1 && buf[0] == '#' && CompareClients(_actualClient,room->nextClientToPlay)) {
+				else if (recv_len > 1 && receiveBuffer[0] == '#' && CompareClients(_actualClient,room->nextClientToPlay)) {
 					//Envío acción al tablero
-					//room.board.DoMove(buf[1]);
-					int choice = buf[1] - '0';
+					int choice = receiveBuffer[1] - '0';
 					if (room->DoBoardMove(choice)) {
+						//Preparo el estado resultante del tablero
+						FitBoardInMessage(room);
+
 						//Chequeo victoria
 						int matchStatus = checkwin(room->square);
-						//int win = room.board.checkwin();
-						//Le envío a los 2 jugadores el estado resultante del tablero
-
-						strcat_s(message, "\n\n\tTic Tac Toe\n\n");
-						strcat_s(message, room->_client1->_name);
-						strcat_s(message, " (X)  -  ");
-						strcat_s(message, room->_client2->_name);
-						strcat_s(message, " (O) \n\n");
-						strcat_s(message, "     |     |     \n");
-						strcat_s(message, "  "); appendChar(message, room->square[1]); strcat_s(message, "  |  "); appendChar(message, room->square[2]); strcat_s(message, "  |  "); appendChar(message, room->square[3]); strcat_s(message, "\n");
-						strcat_s(message, "_____|_____|_____\n");
-						strcat_s(message, "     |     |     \n");
-						strcat_s(message, "  "); appendChar(message, room->square[4]); strcat_s(message, "  |  "); appendChar(message, room->square[5]); strcat_s(message, "  |  "); appendChar(message, room->square[6]); strcat_s(message, "\n");
-						strcat_s(message, "_____|_____|_____\n");
-						strcat_s(message, "     |     |     \n");
-						strcat_s(message, "  "); appendChar(message, room->square[7]); strcat_s(message, "  |  "); appendChar(message, room->square[8]); strcat_s(message, "  |  "); appendChar(message, room->square[9]); strcat_s(message, "\n");
-						strcat_s(message, "     |     |     \n");
 
 						//match in progress
 						if (matchStatus == -1) {
-							strcat_s(message, "Now is turn of ");
-							strcat_s(message, room->nextClientToPlay->_name);
+							strcat_s(sendBuffer, "Now is turn of ");
+							strcat_s(sendBuffer, room->nextClientToPlay->_name);
+							strcat_s(sendBuffer, "\n");
 						}
+						//if game get stuck
 						else if (matchStatus == 0) {
-							//if game get stuck
+							strcat_s(sendBuffer, "It's a tie \n");
+							strcat_s(sendBuffer, "\n Wanna play again? ");
+							strcat_s(sendBuffer, "\n Use #Y to confirm or #N to leave game");
+							room->WaitingForConfirmation = true;
 						}
+						//Someone win
 						else if (matchStatus == 1) {
-							//Someone win
+							strcat_s(sendBuffer, "Game is finished! The winner is: ");
+							strcat_s(sendBuffer, room->GetLastMoveAuthor()->_name);
+							strcat_s(sendBuffer, "\n Wanna play again? ");
+							strcat_s(sendBuffer, "\n Use #Y to confirm or #N to leave game");
+							room->WaitingForConfirmation = true;
 						}
-
 
 						//Le mando al cliente 1
-						if (sendto(s, message, strlen(message), 0, (struct sockaddr*) &room->_client1->_sockaddr_in, slen) == SOCKET_ERROR)
-						{
-							printf("sendto() failed with error code : %d", WSAGetLastError());
-							exit(EXIT_FAILURE);
-						}
+						SendMessageTo(room->_client1);
 						//Le mando al cliente 2
-						if (sendto(s, message, strlen(message), 0, (struct sockaddr*) &room->_client2->_sockaddr_in, slen) == SOCKET_ERROR)
-						{
-							printf("sendto() failed with error code : %d", WSAGetLastError());
-							exit(EXIT_FAILURE);
-						}
-
-
-						//Si se termino indico ganador y perdedor
-						//Ofrezco comenzar denuevo o salir
-
+						SendMessageTo(room->_client2);
 					}
 					else {
 						//Invalid move
 						//Notify client
-
-						strcat_s(message, "Invalid Move, retry");
-						if (sendto(s, message, strlen(message), 0, (struct sockaddr*) &room->nextClientToPlay->_sockaddr_in, slen) == SOCKET_ERROR)
-						{
-							printf("sendto() failed with error code : %d", WSAGetLastError());
-							exit(EXIT_FAILURE);
-						}
+						strcat_s(sendBuffer, "Invalid Move, retry");
+						SendMessageTo(room->nextClientToPlay);
 					}
-
 				}
 				//Si no arranca con # o si no es el turno de ese player
 				else {
 					//Envío el mensaje a la sala
-					strcat_s(message, _actualClient->_name);
-					strcat_s(message, " ");
-					const int whiteSpaceLengt = 1;
-					strcat_s(message, (BUFLEN - strlen(_actualClient->_name) - whiteSpaceLengt), buf);
-					printf(message);
+					strcat_s(sendBuffer, _actualClient->_name);
+					strcat_s(sendBuffer, " ");
+					strcat_s(sendBuffer, receiveBuffer);
 
 					//Le mando al cliente 1
-					if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client1->_sockaddr_in, slen) == SOCKET_ERROR)
-					{
-						printf("sendto() failed with error code : %d", WSAGetLastError());
-						exit(EXIT_FAILURE);
-					}
+					SendMessageTo(room->_client1);
 					//Le mando al cliente 2
-					if (sendto(s, message, recv_len + strlen(_actualClient->_name) + 1, 0, (struct sockaddr*) &room->_client2->_sockaddr_in, slen) == SOCKET_ERROR)
-					{
-						printf("sendto() failed with error code : %d", WSAGetLastError());
-						exit(EXIT_FAILURE);
-					}
+					SendMessageTo(room->_client2);
 				}
 			}
-		}
-		else {
-
 		}
 	}
 
 	closesocket(s);
 	WSACleanup();
-
 	return 0;
 }
 
@@ -405,7 +372,6 @@ void CreateSocket() {
 	}
 	printf("Socket created.\n");
 }
-
 void InitialiseWinSock() {
 	printf("\nInitialising Winsock...");
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -438,4 +404,89 @@ void ShowWaitingForDataText() {
 		text = 0;
 	}
 	fflush(stdout);
+}
+bool CheckIfClientAlreadyExist(Client* client) {
+	for (int i = 0; i < _clients.size(); i++) {
+		if (CompareClients(client, _clients[i])) {
+			//_actualClient = _clients[i];
+			client->SetName(_clients[i]->_name);
+			client->InRoomNumber = _clients[i]->InRoomNumber;
+			return true;
+			printf("Client Already Exist \n");
+		}
+	}
+	return false;
+}
+void JoinNewPlayer(Client* client) {
+	client->SetName(receiveBuffer);
+	Client* newClient = new Client(client->_name, client->_sockaddr_in);
+	_clients.push_back(newClient);
+	printf("New User Connected \n");
+	JoinPlayerToMainRoom(newClient);
+
+}
+void JoinPlayerToMainRoom(Client* client) {
+	if (mainRoom.PeopleInRoom == 1) {
+		_rooms.push_back(Room());
+		_rooms.back().Initialize(mainRoom._client1, client, RoomCount);
+		RoomCount++;
+		FitBoardInMessage(&_rooms.back());
+		strcat_s(sendBuffer, "\n Lets play! it's ");
+		strcat_s(sendBuffer, _rooms.back().nextClientToPlay->_name);
+		strcat_s(sendBuffer, " turn! \n");
+		//Envío el tablero con el estado inicial y los nombres de contra quien juegan
+		SendMessageTo(_rooms.back()._client1);
+		SendMessageTo(_rooms.back()._client2);
+		memset(sendBuffer, '\0', BUFLEN);
+
+		mainRoom = Room();
+	}
+	else {
+		mainRoom.AddClient(client);
+		client->InRoomNumber = 0;
+		//SendLobbyInfo
+		strcat_s(sendBuffer, "Hi ");
+		strcat_s(sendBuffer, client->_name);
+		strcat_s(sendBuffer, "! This is our Lobby Room, you will be here until we find someone else who want to play!\n");
+		SendMessageTo(client);
+		memset(sendBuffer, '\0', BUFLEN);
+	}
+}
+void FitBoardInMessage(Room* room) {
+
+	strcat_s(sendBuffer, "BOARD");
+	strcat_s(sendBuffer, "\n\n\tTic Tac Toe\n\n");
+	strcat_s(sendBuffer, room->_client1->_name);
+	strcat_s(sendBuffer, " (X)  -  ");
+	strcat_s(sendBuffer, room->_client2->_name);
+	strcat_s(sendBuffer, " (O) \n\n");
+	strcat_s(sendBuffer, "     |     |     \n");
+	strcat_s(sendBuffer, "  "); appendChar(sendBuffer, room->square[1]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[2]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[3]); strcat_s(sendBuffer, "\n");
+	strcat_s(sendBuffer, "_____|_____|_____\n");
+	strcat_s(sendBuffer, "     |     |     \n");
+	strcat_s(sendBuffer, "  "); appendChar(sendBuffer, room->square[4]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[5]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[6]); strcat_s(sendBuffer, "\n");
+	strcat_s(sendBuffer, "_____|_____|_____\n");
+	strcat_s(sendBuffer, "     |     |     \n");
+	strcat_s(sendBuffer, "  "); appendChar(sendBuffer, room->square[7]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[8]); strcat_s(sendBuffer, "  |  "); appendChar(sendBuffer, room->square[9]); strcat_s(sendBuffer, "\n");
+	strcat_s(sendBuffer, "     |     |     \n");
+
+}
+void SendMessageTo(Client* client) {
+	if (sendto(s, sendBuffer, strlen(sendBuffer), 0, (struct sockaddr*) &client->_sockaddr_in, slen) == SOCKET_ERROR)
+	{
+		printf("sendto() failed with error code : %d", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+}
+void RemoveClient(Client* client) {
+	memset(sendBuffer, '\0', BUFLEN);
+	strcat_s(sendBuffer, "QUITGAME");
+	SendMessageTo(client);
+	for (int i = 0; i < _clients.size(); i++)
+	{
+		if (CompareClients(_clients[i], client)) {
+			_clients.erase(_clients.begin() + i);
+		}
+	}
+	memset(sendBuffer, '\0', BUFLEN);
 }

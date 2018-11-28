@@ -1,12 +1,4 @@
-// ChatClient.cpp : Defines the entry point for the console application.
-//
-
 #include "stdafx.h"
-
-/*
-Simple udp client
-Silver Moon (m00n.silv3r@gmail.com)
-*/
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
@@ -68,24 +60,10 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 
-	//receive a reply and print it
-	//clear the buffer by filling null, it might have previously received data
-	//memset(buf, '\0', BUFLEN);
-	////try to receive some data, this is a blocking call
-	//if (recvfrom(s, buf, BUFLEN, 0, (struct sockaddr *) &si_other, &slen) == SOCKET_ERROR)
-	//{
-	//	printf("recvfrom() failed with error code : %d", WSAGetLastError());
-	//	exit(EXIT_FAILURE);
-	//}
-	//
-	//puts(buf);
-
-
 	fd_set fds;
 	timeval interval;
 	interval.tv_sec = 0;
 	interval.tv_usec = 30000;
-
 
 	int sendMessageIndex = 0;
 	memset(sendBuf, '\0', BUFLEN);
@@ -106,23 +84,35 @@ int main(void)
 				printf("recvfrom() failed with error code : %d", WSAGetLastError());
 				exit(EXIT_FAILURE);
 			}
-			int firstSpacePosition = 0;
-			for (size_t i = 0; i < BUFLEN; i++)
-			{
-				//32 is spacebar char
-				if (buf[i] == 32) {
-					firstSpacePosition = i;
-					i = BUFLEN;
-				}
+			if (strcmp(buf, "QUITGAME") == 0) {
+				getchar();
+				return 0;
 			}
+
 			string strMessage;
-			if (firstSpacePosition > 0) {
-				//USAR ACA EN LUGAR DE BUFLEN +SAYTEXT EL TAMAÑO DE MI BUFFER MESSAGE Y HACERLE A BUF UN SUBSTRING
-				//strcat_s(message, firstSpacePosition, buf);
-				strMessage.append(buf, firstSpacePosition);
-				
+			string bufString = buf;
+			int firstSpacePosition = 0;
+			if (bufString.compare(0,5,"BOARD") == 0) {
+				firstSpacePosition = 5;
 			}
-			strMessage.append(" Say: ");
+			else if (bufString.compare(0, 2, "Hi") == 0) {
+				firstSpacePosition = 0;
+			}
+			else {
+				for (size_t i = 0; i < BUFLEN; i++)
+				{
+					//32 is spacebar char
+					if (buf[i] == 32) {
+						firstSpacePosition = i;
+						i = BUFLEN;
+					}
+				}
+				if (firstSpacePosition > 0) {
+					strMessage.append(buf, firstSpacePosition);
+
+				}
+				strMessage.append(" Say: ");
+			}
 			strMessage.append(string(buf).substr(firstSpacePosition,BUFLEN));
 			
 			puts(strMessage.c_str());
@@ -134,28 +124,22 @@ int main(void)
 				//Enter is pressed
 				if (ch == 13 && sendMessageIndex>0) {
 
+					//Envío el mensaje
 					if (sendto(s, sendBuf, strlen(sendBuf), 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR) {
 						printf("sendto() failed with error code : %d", WSAGetLastError());
 						exit(EXIT_FAILURE);
 					}
+					//Limpio el index
 					sendMessageIndex = 0;
+					//Limpio el buffer
 					memset(sendBuf, '\0', BUFLEN);
 					printf("\n");
-					//Envío el mensaje
-					//Limpio el index
-					//Limpio el buffer
 				}
 				else if(ch!=13) {
 					sendBuf[sendMessageIndex] = ch;
 					printf((char*)&ch);
 					sendMessageIndex++;
 				}
-
-				//printf("Enter message : ");
-				//gets_s(message);
-
-				//send the message
-
 			}
 
 		}
